@@ -1,0 +1,154 @@
+---
+title: "Optimizacion del codigo"
+author: "Kriss Gutierrez Anco"
+date: "28 de noviembre de 2017"
+output:
+  html_document:
+    highlight: pygments
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Optimizando el codigo
+Optimizar el codigo para que ejecute mas rapido es un proceso iterativo: 
+
+ *  Encontrar los cuellos de botellas (La parte mas lenta de tu código)  
+ *  Tratar de eliminar estos  
+ *  Repetir hasta que su codigo se vuelve lo suficientemente rápido  
+Es dificil proporcionar estrategias generales optimización del rendimiento que ayude a garantizar que el código sea más rápido y siga siendo el correcto. No todos o cuellos podran ser eliminados, ya sea porque no hay una solución rápida y fácil o porque el código ya está bien optimizado y no es posible una mejora significativa.  
+
+### Medicion de desempeño
+Para entender el rendimiento, use un generador de perfiles. Hay distintos tipos de perfiladores. R usa el llamado muestreo o perfil estadistico 
+Un generador de perfiles de muestreo detiene la ejecución del código cada pocos milisegundos y registra qué función se está ejecutando actualmente (junto con qué función la llamó)
+```{r}
+#library(lineprof)
+#f <- function() {
+#  pause(0.1)
+#  g()
+#  h()
+#}
+#g <- function() {
+#  pause(0.1)
+#  h()
+#}
+#h <- function() {
+#  pause(0.1)
+#}
+```
+Si se perfila la ejecucion de f() deteniendo cada 0.1 segundos veriamos un perfil como el siguiente:
+```{r}
+#f() 
+#f() > g()
+#f() > g() > h()
+#f() > h()
+```
+Cada linea representa un tic del perfilador (0.1 segundos en este caso) y las llamadas a funciones estan anidadas con >. Muestra que el código pasa 0.1 s funcionando f (), luego 0.2 s corriendo g (), luego 0.1 s ejecutando h ().
+Si nosotros perfilamos f() usando Rprof, probablemente no obtengamos un resultado muy claro . Esto se debe a que los perfiles son dificiles de hacer con precision sin relantizar su codigo. El compromiso que RProf hace al realizar el muestreo, solo tiene un impacto minimo en el rendimiento global, pero es fundamentalmente estocastico
+Existe variabilidad tanto en la precision del temporizador como el tiempo empleado en cada operación, de modo que cada vez que haga un perfil obtendra una respuesta ligeramente diferente.
+En lugar de centrarnos en las llamadas individuales, visualizaremos agregados usando el paquete lineprof, existen otras alternativas, como su nombre lo indica la unidad fundamental de analisis en lineprof() es una linea de codigo, esto hace que lineprof sea menos preciso que las otras alternativas(porque una linea de codigo puede multiples llamadas a funciones
+Para usar lineprof, primero guardamos el código en un archivo y source()(hace que R acepte su entrada desde el archivo o URL con nombre o conexión o expresiones directamente) a este. Aquí perfiling-example.R contiene la definición de f(), g() y h().
+Tenga en cuenta que debe usar source () para cargar el código. Esto se debe ya que lineprof usa screefs para hacer coincidir el codigo con el perfil y los screefs necesitados solo son creados cuando carga el codigo desde el disco. Nosotros usamos lineprof para ejecutar nuestra funcion y capturar el tiempo de salida. Por ahora solo nos enfocaremos en la columna de tiempo que estima cuanto cada linea tardo en ser ejecutada y la columna de referencia que nos dice que linea de codigo se ejecuto. Las estimaciones no son correctas pero las proporciones parecen estar correctas
+```{r}
+#library(lineprof)
+#source("profiling-example.R")
+#l <- lineprof(f())
+#l
+#>    time alloc release dups           ref     src
+#> 1 0.074 0.001       0    0 profiling.R#2 f/pause
+#> 2 0.143 0.002       0    0 profiling.R#3 f/g    
+#> 3 0.071 0.000       0    0 profiling.R#4 f/h  
+```
+Iniciaremos un explorador interactivo utilizando el paquete shiny que abrira una nueva pagina web o un panel si trabaja en RStudio mostrando su codigo fuente con informacion de acerca del tiempo de ejecucion que tardo cada linea en ejecutarse. 
+La t columna visualiza cuanto tiempo se gasta en cada linea. Aunque no es preciso, esto le permitira detectar los cuellos de botella. Esta tecnica deberia permitirle detectarrapidamente los cuellos de botella en su codigo 
+
+#### Limitaciones
+ * El periflado no se extiende al codigo C. Usted puede verificar que que su codigo R llama al codigo C/C++ pero no que las funciones son llamadas dentro de su codigo C/C++      
+ * Similarmente, usted no puede que es lo que pasa dentro de las funciones primitivas o el codigo compilado del codigo bytes (El bytecode es un código intermedio más abstracto que el código máquina. Habitualmente es tratado como un archivo binario que  contiene un programa ejecutable similar a un módulo objeto, que es un archivo binario producido por el compilador cuyo contenido es el código objeto o código máquina.      
+ * Si esta haciendo una gran cantidad de programacion funcional con funciones anonimas, puede ser dificil averiguar que funcion con exactitud se esta llamando. La forma mas facil de evitar esto es nombrar sus funciones.    
+ * La evaluación diferida significa que los argumentos a menudo se evalúan dentro de otra función.   
+
+### Mejorando el desempeño
+Una vez que haya utilizado la creación de perfiles para identificar un cuello de botella, usted necesita hacerlo mas rapido, las siguientes es una  serie de tecnicas que son ampliamente utiles: 
+
+ * Busque soluciones existentes   
+ * Realize menos trabajo  
+ * Vectorize  
+ * Paralize   
+ * Evite las copias  
+ * Compilacio de codigo byte  
+Una tecnica final es reescribir en un lenguaje mas rapido, como C++.  
+Antes de entrar en técnicas específicas, primero se  describira una estrategia general y un estilo de organización que es útil cuando se trabaja con el rendimiento.    
+
+### Organizacion del codigo
+Hay dos trampas que son fáciles de caer al tratar de hacer que su código sea más rápido:  
+
+ * Escribir un código más rápido pero incorrecto. 
+ * Escribir código que crees que es más rápido, pero en realidad no es mejor.  
+Al enfrentar un cuello de botella, es probable que surjan multiples enfoques. Escribe una funcion para cada enfoque, encapsulando todo el comportamiento relevante, Esto hace mas facil verificar que cada enfoque retorne el resultado correcto y el tiempo que tomo este para ejecutarlo, se presenta dos enfoques para calcular la media:
+```{r}
+mean1 <- function(x) mean(x)
+mean2 <- function(x) sum(x) / length(x)
+```
+Genere un caso de prueba representativo. El caso debe ser lo suficientemente grande para capturar la esemcia del problema pero suficientemente pequeño para que tarde algunos segundos para ejecutarse. Usted no desea que tarde demasiado porque usted necesitara ejecutar el caso de prueba muchas veces para comparar enfoques. Por otro lado usted no espera que el caso sea demasiado pequeño porque los resultados pueden no ajustarse al problema real
+Usando el caso prueba para verificar rapidamente que todas las variantes retornen el mismo resultado. Una manera facil de hacer esto es con stopifnot() y all.equal(). Para problemas reales con pocos resultados podriamos necesitar mas pruebas para estar seguros que el enfoque no retorna accidentalmente la respuesta correcta  
+```{r}
+#x <- runif(100)
+#stopifnot(all.equal(mean1(x), mean2(x)))
+```
+Finalmente usamos el paquete microbenchmark para comparar cuanto tiempo toma cada variacion en ejecutarse. Para problemas grandes reduzca el parametro de tiempo para que se tarde algunos segundos en ejecutarse. Concentrese en el tiempo medio  y use los cuartiles superior e inferior para medir la variabilidad de la medición.(Hay varios cuartiles de una variable de observación. El primer cuartil, o cuartil inferior, es el valor que corta el primer 25% de los datos cuando está ordenado en orden ascendente. El segundo cuartil, o mediana, es el valor que corta el primer 50%. El tercer cuartil, o cuartil superior, es el valor que corta el primer 75%.)
+```{r}
+#microbenchmark(
+#  mean1(x),
+#  mean2(x)
+#)
+## Unit: nanoseconds
+##      expr   min    lq mean median    uq    max neval
+##  mean1(x) 3,590 3,750 4656  4,000 4,350 28,100   100
+##  mean2(x)   817   990 1383  1,180 1,340 12,700   100
+```
+### ¿Alguien ya ha resuelto el problema?
+Si su cuello de botella es una funcion en un paquete, vale la pena mirar otros paquetes que hacen lo mismo, dos buenos lugares para comenzar son: 
+
+ * CRAN task views.  
+ * Dependencias inversas de Rcpp, como figura en su pagina CRAN.  
+De otra manera, el reto es describir su cuello de botella de manera que ayude a encontrar problemas relacionados y sus soluciones, leer ampliamentesobre estadisticas y algoritmos usted puede construir su propia base de conocimiento a lo largo del tiempo. Alternativamente pregunte a los demas, buscar en linea, paginas relacionada con R.  
+
+### Hacerlo menos posible
+La manera de hacer unna funcion mas rapida es hacer que esta haga menos, una manera de hacer esto es adoptando un tipo mas especifico de entrada o salida, o un problema mas especifico, por ejemplo:
+
+ * roSums(),colSums(),rowMeans() y colMeans() son mas rapidas que su equivalentes usando apply porque estan vectorizados.    
+ * vapply() es mas rapido que sapply() porque pre-especifica el tipo de salida.   
+ * Si desea saber si un vector contiene un solo valor, any(x==10) este es ms rapido que 10 %in% x, esto es debido porque probar la igualdad es mas simple que probar la inclusion en un conjunto.     
+Usted necesita tener un buen vocabulario, empezando con lo basico , es decir funciones basicas y expandiendo su vocabulario leyendo regularmente codigo R.Algunos lugares donde puede hacerlo R-help mailing list and stackoverflow.
+Algunas funciones fuente tienen un tipo de salida en especifico, si su salida no es del tipo correcto, la funcion hace trabajo extra. En su lugar busque una funcion que funcione con sus datos tal como estan, o considere cambiar la manera almaceno sus datos Un ejemplo de este problema es el uso de apply() sobre un data frame, apply() siempre convierte su entrada en una matriz. No solo es propenso a errores sino que tambien es lento. Otras funciones haran menos trabajo si les brinda mas informacion sobre el problema. Vale la pena experimentar con los argumentos.  
+A veces puede hacer que una funcion sea mas rapida evitando el envio de metodos, el despacho de metodos en R puede ser costoso, Si está llamando a un método en un círculo cerrado, puede evitar algunos de los costos haciendo la búsqueda del método solo una vez.    
+   * Para S3, usted podria hacer esto llamando generic.class() en lugar de generic().    
+   * Para S4, usted podria hacer usando.   
+Sabiendo que esta tratando con un tipo especifico de entrada puede haber otra manera tal de que sea un codigo mas rapido. Por ejemplo as.data.frame() es muy lento porque este coecciona cada elemento  en un data.frame y luego realiza rbind() y los junta. Si usted tiene una lista con vectores de igual longitud, usted puede directamente transformar esto en un data frame. En este caso usted podra hacer suertes suposiciones acerca de sus entradas.  
+La mayoria de funciones basicas en R estan escritas para flexibilidad y la funcionalidad no para el rendimiento.  
+
+### Vectorizar
+Vectorizar su codigo no solo se trata de evitar bucles tambien consiste en abordar el problema de "todo un objeto" pensando en vectores. HAy dos cualidades clave en una funcion vectorizada:  
+
+ * Hace mas simple un problema. En lugar de pensar en las componentes del vector, ahora se enfocara en vectores completos.    
+ * Los bucles en una funcion vectorizada seran escritos en C en lugar de R. Los bucles en C son mucho mas rapidos.    
+La vectorizacion tambien es importante para escribir codigo R rapido. Esto no significa simplemente usar las funciones apply() o lapply(). Esas funciones mejoran la interfaz de una funcion, pero no cambian fundamentalmente el rendimiento. Usar la vectorizacion para el rendimiento significa encontrar la funcion R que se implemente en C y la que este mas cerca para aplicarse a su problema.    
+Las funciones vectorizadas que se aplican a muchos cuellos de botella son:  
+
+ * rowSums(), colSums(), rowMeans() y  colMeans(). Estas funciones de matriz vectorizada siempre serán más rápidas que usando apply ().   
+ * El subconjunto vectorizado puede conducir a grandes mejoras en la velocidad. Recuerde las tecnicas detras detras de las tablas de busqueda asi como la coincidencia y fusion.  
+ * Si esta convirtiendo valores continuos a categoricos asegurese de como usar las funciones cut() y findinterval().    
+ * Tenga en cuenta las funciones vectorizadas como cumsum() y diff().   
+El algebra matricial es un ejemplo general de vectorizacion. Si usted puede encontrar una solucion a su problema usando el algebra matricial obtendra una solucion muy rapida. La desventaja de la vectorización es que hace más difícil predecir cómo se escalarán las operaciones.  
+
+### Evitar Copias
+Una fuente de que el codigo se haga lento en R es hacer crecer un objeto con un bucle, siempre que use c(), append(), cbind(),rbind() o paste() se creara un objeto mas grande, asi R debe asignar nuevo espacio para el objeto mas grande y luego copiar el objeto viejo a su nuevo hogar, si repites esto muchas veces como en un ciclo for esto puede salir muy caro se  discute este problema con más profundidad y se brinda algunas herramientas para determinar cuándo está haciendo copias [1](Modification in place)
+
+## Referencias
+http://stackoverflow.com/questions/22515525#22518603
+http://stackoverflow.com/questions/22515175#22515856
+http://stackoverflow.com/questions/3476015#22511936
+http://adv-r.had.co.nz/memory.html#modification
